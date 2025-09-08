@@ -1,0 +1,4 @@
+pyspark
+pandas
+requests
+apache-airflow-providers-apache-spark

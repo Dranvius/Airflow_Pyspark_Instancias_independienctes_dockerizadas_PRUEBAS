@@ -1,0 +1,49 @@
+version: '3'
+services:
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "7077:7077"
+      - "8083:8080"
+    networks:
+      - airflow-spark
+    volumes:
+      - ./pyspark_instancia_pruebas:/opt/bitnami/spark/app
+
+  spark-worker:
+    image: bitnami/spark:latest
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    ports:
+      - "8084:8081"
+    networks:
+      - airflow-spark
+    volumes:
+      - ./pyspark_instancia_pruebas:/opt/bitnami/spark/app
+
+
+  spark-client:
+    image: bitnami/spark:latest
+    container_name: spark-client
+    depends_on:
+      - spark-master
+    environment:
+      - HOME=/opt/bitnami/spark
+    volumes:
+      - ./pyspark_instancia_pruebas:/opt/bitnami/spark/app
+    stdin_open: true
+    tty: true
+    command: bash -lc "sleep infinity"
+    networks:
+      - airflow-spark
+
+networks:
+  airflow-spark:
+    external: true
