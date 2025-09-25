@@ -1,5 +1,7 @@
 from pyspark.sql import SparkSession
 
+
+# Crear la seccion de spark
 spark = SparkSession.builder.appName("PiApp").getOrCreate()
 
 # Estimación de Pi
