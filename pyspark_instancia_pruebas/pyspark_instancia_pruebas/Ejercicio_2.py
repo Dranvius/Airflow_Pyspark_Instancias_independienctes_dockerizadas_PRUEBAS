@@ -2,6 +2,11 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, rand, lit, concat, monotonically_increasing_id, broadcast, when
 import time
 
+
+#! ========================
+#! 1. JOINS CON BIG DATA
+#! ========================
+
 spark = SparkSession.builder.appName("SkewCartesianExample").getOrCreate()
 
 # ========================

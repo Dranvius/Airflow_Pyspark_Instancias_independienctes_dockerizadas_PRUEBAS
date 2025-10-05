@@ -15,6 +15,9 @@ with DAG(
 ) as dag:
 
 
+
+    # Procesamiento de big data ejercicio.
+
     # T1 - Ejecutar
     t1 = SparkSubmitOperator(
         task_id="broadcast_salting",
@@ -29,7 +32,6 @@ with DAG(
         "spark.executor.instances": "2"},
 
     )
-
 
 
     # Orquestación: extract → transform → load

@@ -13,6 +13,7 @@ logger = logging.getLogger("KafkaETL")
 # ========================
 # Inicializar SparkSession
 # ========================
+
 try:
     logger.info("=== Iniciando SparkSession ===")
     spark = SparkSession.builder.appName("KafkaETL").getOrCreate()
@@ -43,6 +44,8 @@ schema_clientes = StructType([
 # ========================
 # Lectura de Kafka
 # ========================
+
+# ! IMPORTANTE Lectura de kafka en stream : Se esta leyendo pero deja el hilo abierto esperando cambios (para ETL esta mal porque deberia volver a ejecutar todo)
 def read_kafka_stream(topic_name):
     try:
         logger.info(f"=== Leyendo desde Kafka topic: {topic_name} ===")
@@ -105,6 +108,8 @@ cliente_df.writeStream \
 def write_bronze(df, path, checkpoint, name):
     try:
         logger.info(f"=== Configurando escritura Bronze {name} ===")
+
+        #! IMPORTANTE : EL write stream escribe sobre un hilo de procesamiento contioonuo, deja abierto el hilo para posibles modificaciones
         query = df.writeStream \
             .format("parquet") \
             .option("path", path) \
@@ -168,7 +173,7 @@ gold_query_sales = write_bronze(
 # ========================
 # Conexión y escritura a PostgreSQL
 # ========================
-def write_to_postgres(df, batch_id, table_name, schema="public"):
+def write_to_postgres(df, batch_id, table_name, schema="datos"):
     try:
         conn = psycopg2.connect(
             host="postgres",

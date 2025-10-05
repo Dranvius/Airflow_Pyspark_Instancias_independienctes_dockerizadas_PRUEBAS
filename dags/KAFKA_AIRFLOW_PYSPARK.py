@@ -25,6 +25,9 @@ with DAG(
             "spark.master": "spark://spark-master:7077",
             "spark.hadoop.hadoop.user.name": "airflow"
         },
+        # Ejecucion de paquetes
+            # Es posible compartir paquetes de ejecucion durante la ejecucion de una instruccion
+
         packages=(
             "org.apache.spark:spark-sql-kafka-0-10_2.13:3.5.1,"
             "org.apache.kafka:kafka-clients:3.7.0,"
