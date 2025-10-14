@@ -1,0 +1,10 @@
+{"timestamp":"2025-10-11T02:25:30.691828","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:26:01.212699","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:26:31.652464","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:27:02.086143","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:27:32.425618","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:28:03.034406","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:28:33.933219","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:29:04.298678","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:29:34.761855","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}
+{"timestamp":"2025-10-11T02:30:05.130180","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/etl_pyspark.py","logger":"airflow.models.dagbag.DagBag"}

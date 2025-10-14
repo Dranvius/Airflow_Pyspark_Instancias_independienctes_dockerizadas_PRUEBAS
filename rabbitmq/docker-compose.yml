@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    ports:
+      - "5674:5672"     # Puerto de mensajería AMQP
+      - "15674:15672"   # Panel web de administración
+    environment:
+      # No creamos el usuario guest, lo definimos desde el archivo JSON
+      RABBITMQ_MANAGEMENT_LOAD_DEFINITIONS: /etc/rabbitmq/definitions.json
+      # Fuerza la carga del archivo de definiciones al iniciar
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbitmq_management load_definitions \"/etc/rabbitmq/definitions.json\""
+    volumes:
+      - ./rabbit_definitions.json:/etc/rabbitmq/definitions.json:ro
+    networks:
+      - airflow-spark
+    restart: always
+
+networks:
+  airflow-spark:
+    external: true

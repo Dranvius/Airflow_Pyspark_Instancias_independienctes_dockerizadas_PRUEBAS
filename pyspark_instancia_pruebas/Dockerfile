@@ -1,5 +1,5 @@
 # Imagen base de Spark (compatible y disponible en Docker Hub)
-FROM bitnami/spark:3.5.1
+FROM spark:3.5.1
 
 # Instalar Python y utilidades
 USER root

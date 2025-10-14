@@ -1,0 +1,38 @@
+{
+  "vhosts": [
+    { "name": "/app_vhost" }
+  ],
+  "users": [
+    {
+      "name": "guest",
+      "password": "guest",
+      "tags": ["administrator"]
+    }
+  ],
+  "permissions": [
+    {
+      "user": "guest",
+      "vhost": "/app_vhost",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "exchanges": [
+    { "name": "exchange_direct_app", "vhost": "/app_vhost", "type": "direct", "durable": true },
+    { "name": "exchange_topic_app", "vhost": "/app_vhost", "type": "topic", "durable": true },
+    { "name": "exchange_fanout_app", "vhost": "/app_vhost", "type": "fanout", "durable": true }
+  ],
+  "queues": [
+    { "name": "queue_orders", "vhost": "/app_vhost", "durable": true },
+    { "name": "queue_clientes", "vhost": "/app_vhost", "durable": true },
+    { "name": "queue_auditoria", "vhost": "/app_vhost", "durable": true },
+    { "name": "queue_logs", "vhost": "/app_vhost", "durable": true }
+  ],
+  "bindings": [
+    { "source": "exchange_direct_app", "vhost": "/app_vhost", "destination": "queue_orders", "destination_type": "queue", "routing_key": "order.created" },
+    { "source": "exchange_direct_app", "vhost": "/app_vhost", "destination": "queue_clientes", "destination_type": "queue", "routing_key": "cliente.created" },
+    { "source": "exchange_topic_app", "vhost": "/app_vhost", "destination": "queue_auditoria", "destination_type": "queue", "routing_key": "audit.#" },
+    { "source": "exchange_fanout_app", "vhost": "/app_vhost", "destination": "queue_logs", "destination_type": "queue", "routing_key": "" }
+  ]
+}
