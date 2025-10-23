@@ -9,7 +9,7 @@ from datetime import datetime
 
 with DAG(
     dag_id="spark_join_con_mucha_informacion",
-    start_date=datetime(2025, 9, 22),
+    start_date=datetime(2025, 10, 21),
     schedule=None,   # manual
     catchup=False, # No recurar fechas pasadas
 ) as dag:

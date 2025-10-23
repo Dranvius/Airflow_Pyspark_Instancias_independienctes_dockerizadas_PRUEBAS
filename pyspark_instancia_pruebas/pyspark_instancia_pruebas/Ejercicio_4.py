@@ -13,7 +13,6 @@ logger = logging.getLogger("KafkaETL")
 # ========================
 # Inicializar SparkSession
 # ========================
-
 try:
     logger.info("=== Iniciando SparkSession ===")
     spark = SparkSession.builder.appName("KafkaETL").getOrCreate()
@@ -35,21 +34,20 @@ schema_product = StructType([
 ])
 
 schema_clientes = StructType([
-    StructField("id_user", IntegerType()),
+    StructField("cliente_id", IntegerType()),
     StructField("nombre", StringType()),
-    StructField("apellido", StringType()),
-    StructField("edad", IntegerType()),
+    StructField("email", StringType()),
+    StructField("telefono", StringType()),
+    StructField("fecha_registro", StringType())
 ])
 
 # ========================
-# Lectura de Kafka
+# Lectura batch desde Kafka
 # ========================
-
-# ! IMPORTANTE Lectura de kafka en stream : Se esta leyendo pero deja el hilo abierto esperando cambios (para ETL esta mal porque deberia volver a ejecutar todo)
-def read_kafka_stream(topic_name):
+def read_kafka_batch(topic_name):
     try:
-        logger.info(f"=== Leyendo desde Kafka topic: {topic_name} ===")
-        df = spark.readStream.format("kafka") \
+        logger.info(f"=== Leyendo desde Kafka topic: {topic_name} (modo batch) ===")
+        df = spark.read.format("kafka") \
             .option("kafka.bootstrap.servers", "kafka:9092") \
             .option("subscribe", topic_name) \
             .option("startingOffsets", "earliest") \
@@ -60,8 +58,8 @@ def read_kafka_stream(topic_name):
         logger.error(f"Error leyendo de Kafka: {e}")
         raise
 
-df_sales = read_kafka_stream("sales")
-df_clientes = read_kafka_stream("cliente")
+df_sales = read_kafka_batch("sales")
+df_clientes = read_kafka_batch("cliente")
 
 # ========================
 # Parsear JSON
@@ -86,94 +84,37 @@ cliente_df = parse_json(df_clientes, schema_clientes, "clientes_registrados")
 sales_df = sales_df.withColumn("order_date", to_timestamp("order_date", "yyyy-MM-dd HH:mm:ss"))
 
 # ========================
-# Mostrar primeros 5 registros (verificación de Kafka)
+# Mostrar primeros 5 registros
 # ========================
-def show_first_rows(df, batch_id, name):
-    logger.info(f"=== Mostrando primeros 5 registros de {name} ===")
-    df.show(5, truncate=False)
-
-sales_df.writeStream \
-    .foreachBatch(lambda df, batch_id: show_first_rows(df, batch_id, "sales")) \
-    .outputMode("append") \
-    .start()
-
-cliente_df.writeStream \
-    .foreachBatch(lambda df, batch_id: show_first_rows(df, batch_id, "clientes")) \
-    .outputMode("append") \
-    .start()
+logger.info("=== Primeros registros de ventas ===")
+sales_df.show(5, truncate=False)
+logger.info("=== Primeros registros de clientes ===")
+cliente_df.show(5, truncate=False)
 
 # ========================
 # Escritura Bronze (Parquet)
 # ========================
-def write_bronze(df, path, checkpoint, name):
-    try:
-        logger.info(f"=== Configurando escritura Bronze {name} ===")
-
-        #! IMPORTANTE : EL write stream escribe sobre un hilo de procesamiento contioonuo, deja abierto el hilo para posibles modificaciones
-        query = df.writeStream \
-            .format("parquet") \
-            .option("path", path) \
-            .option("checkpointLocation", checkpoint) \
-            .outputMode("append") \
-            .start()
-        logger.info(f"Bronze {name} iniciado correctamente")
-        return query
-    except Exception as e:
-        logger.error(f"Error en Bronze {name}: {e}")
-        raise
-
-bronze_query_sales = write_bronze(
-    sales_df,
-    "/opt/airflow/data/output/bronze/sales",
-    "/tmp/checkpoints/bronze_sales",
-    "sales"
-)
-
-bronze_query_cliente = write_bronze(
-    cliente_df,
-    "/opt/airflow/data/output/bronze/clientes",
-    "/tmp/checkpoints/bronze_clientes",
-    "clientes"
-)
+sales_df.write.mode("overwrite").parquet("/opt/airflow/data/output/bronze/sales")
+cliente_df.write.mode("overwrite").parquet("/opt/airflow/data/output/bronze/clientes")
 
 # ========================
 # Transformaciones Gold
 # ========================
-try:
-    logger.info("=== Configurando agregaciones Gold ===")
-    agg_df = sales_df.withColumn("order_ts", col("order_date")) \
-        .withWatermark("order_ts", "2 minutes") \
-        .groupBy(
-            window(col("order_ts"), "1 minute"),
-            col("product_id")
-        ).agg(
-            spark_sum(col("quantity") * col("price")).alias("total_sales")
-        )
+logger.info("=== Aplicando transformaciones Gold ===")
+agg_df = sales_df.groupBy("product_id") \
+    .agg(spark_sum(col("quantity") * col("price")).alias("total_sales"))
 
-    # Separar columnas window.start y window.end para PostgreSQL
-    agg_df_postgres = agg_df.select(
-        col("window.start").alias("window_start"),
-        col("window.end").alias("window_end"),
-        col("product_id"),
-        col("total_sales")
-    )
-
-    logger.info("Transformaciones Gold aplicadas correctamente")
-except Exception as e:
-    logger.error(f"Error preparando Gold: {e}")
-    raise
-
-gold_query_sales = write_bronze(
-    agg_df_postgres,
-    "/opt/airflow/data/output/gold/sales_metrics",
-    "/tmp/checkpoints/gold_sales",
-    "sales_gold"
+agg_df_postgres = agg_df.select(
+    col("product_id"),
+    col("total_sales")
 )
 
+agg_df_postgres.write.mode("overwrite").parquet("/opt/airflow/data/output/gold/sales_metrics")
+
 # ========================
-# Conexión y escritura a PostgreSQL
+# Función para escribir a PostgreSQL
 # ========================
-def write_to_postgres(df, batch_id, table_name, schema="datos"):
+def write_to_postgres(df, table_name, schema="datos"):
     try:
         conn = psycopg2.connect(
             host="postgres",
@@ -182,7 +123,7 @@ def write_to_postgres(df, batch_id, table_name, schema="datos"):
             password="123"
         )
         cur = conn.cursor()
-        
+
         if table_name == "bronze_sales":
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
@@ -197,8 +138,6 @@ def write_to_postgres(df, batch_id, table_name, schema="datos"):
         elif table_name == "gold_sales_metrics":
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
-                    window_start TIMESTAMP,
-                    window_end TIMESTAMP,
                     product_id INT,
                     total_sales DOUBLE PRECISION
                 )
@@ -225,32 +164,15 @@ def write_to_postgres(df, batch_id, table_name, schema="datos"):
             .option("driver", "org.postgresql.Driver") \
             .mode("append") \
             .save()
-        
-        logger.info(f"Batch {batch_id} guardado en {table_name}")
-    
+        logger.info(f"Datos guardados en PostgreSQL: {table_name}")
     except Exception as e:
         logger.error(f"Error guardando en {table_name}: {e}")
 
 # ========================
-# Escritura de streams a PostgreSQL
+# Escritura a PostgreSQL
 # ========================
-bronze_query_sales_postgres = sales_df.writeStream \
-    .foreachBatch(lambda df, batch_id: write_to_postgres(df, batch_id, "bronze_sales")) \
-    .outputMode("append") \
-    .start()
+write_to_postgres(sales_df, "bronze_sales")
+write_to_postgres(cliente_df, "bronze_clientes")
+write_to_postgres(agg_df_postgres, "gold_sales_metrics")
 
-gold_query_sales_postgres = agg_df_postgres.writeStream \
-    .foreachBatch(lambda df, batch_id: write_to_postgres(df, batch_id, "gold_sales_metrics")) \
-    .outputMode("append") \
-    .start()
-
-bronze_query_cliente_postgres = cliente_df.writeStream \
-    .foreachBatch(lambda df, batch_id: write_to_postgres(df, batch_id, "bronze_clientes")) \
-    .outputMode("append") \
-    .start()
-
-# ========================
-# Esperar terminación de streams
-# ========================
-logger.info("=== Esperando terminación de streams ===")
-spark.streams.awaitAnyTermination()
+logger.info("=== ETL batch completado ===")

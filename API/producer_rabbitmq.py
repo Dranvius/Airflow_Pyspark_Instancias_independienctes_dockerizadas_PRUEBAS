@@ -4,10 +4,8 @@ import json
 import random
 from datetime import datetime
 
-# Configuración base
 RABBITMQ_URL = "amqp://airflow:airflow123@rabbitmq:5672/%2Fapp_vhost"
 
-# Datos base
 products = [
     {"product_id": 1, "category": "Electronics", "price": 500},
     {"product_id": 2, "category": "Clothing", "price": 300},
@@ -18,23 +16,30 @@ first_names = ["Juan", "Maria", "Pedro", "Luisa", "Carlos", "Ana", "Sergio", "Ca
 last_names = ["Gomez", "Rodriguez", "Martinez", "Fernandez", "Linares", "Lopez"]
 
 
+async def get_or_declare_exchange(channel, name, type_):
+    """
+    Intenta obtener un exchange existente de forma pasiva.
+    Si no existe, lo crea con los parámetros correctos.
+    """
+    try:
+        return await channel.declare_exchange(name, passive=True)
+    except aio_pika.exceptions.ChannelClosed:
+        # Si el exchange no existe o hay conflicto, lo recreamos limpio
+        print(f"⚠️ Exchange '{name}' no existe o está mal configurado. Creando nuevamente...")
+        channel = await channel.connection.channel()  # Reabrir canal limpio
+        return await channel.declare_exchange(name, type_, durable=True, auto_delete=False)
+
+
 async def produce_messages():
-    # 🔗 Conexión al vhost personalizado
     connection = await aio_pika.connect_robust(RABBITMQ_URL)
     channel = await connection.channel()
 
     # 📦 Declaración de exchanges
-    exchange_direct = await channel.declare_exchange(
-        "exchange_direct_app", aio_pika.ExchangeType.DIRECT, durable=True
-    )
-    exchange_topic = await channel.declare_exchange(
-        "exchange_topic_app", aio_pika.ExchangeType.TOPIC, durable=True
-    )
-    exchange_fanout = await channel.declare_exchange(
-        "exchange_fanout_app", aio_pika.ExchangeType.FANOUT, durable=True
-    )
+    exchange_direct = await get_or_declare_exchange(channel, "exchange_direct_app", aio_pika.ExchangeType.DIRECT)
+    exchange_topic = await get_or_declare_exchange(channel, "exchange_topic_app", aio_pika.ExchangeType.TOPIC)
+    exchange_fanout = await get_or_declare_exchange(channel, "exchange_fanout_app", aio_pika.ExchangeType.FANOUT)
 
-    print("✅ Conectado a RabbitMQ y exchanges declarados.\n")
+    print("✅ Conectado a RabbitMQ y exchanges listos.\n")
 
     while True:
         # ====== CLIENTES ======
@@ -94,11 +99,11 @@ async def produce_messages():
         }
 
         await exchange_fanout.publish(
-            aio_pika.Message(body=json.dumps(log).encode())
+            aio_pika.Message(body=json.dumps(log).encode()),
+            routing_key=""  # <--- necesario aunque no se use
         )
         print(f"📤 [Fanout] Sent log → {log}\n")
 
-        # Espera 3 segundos antes del siguiente ciclo
         await asyncio.sleep(3)
 
 

@@ -2,3 +2,5 @@ pyspark
 pandas
 requests
 apache-airflow-providers-apache-spark
+psycopg2-binary
+psycopg2

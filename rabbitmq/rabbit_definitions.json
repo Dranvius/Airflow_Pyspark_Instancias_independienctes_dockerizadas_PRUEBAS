@@ -18,6 +18,7 @@
       "read": ".*"
     }
   ],
+  
   "exchanges": [
     { "name": "exchange_direct_app", "vhost": "/app_vhost", "type": "direct", "durable": true },
     { "name": "exchange_topic_app", "vhost": "/app_vhost", "type": "topic", "durable": true },

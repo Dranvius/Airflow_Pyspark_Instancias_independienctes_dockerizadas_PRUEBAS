@@ -1,29 +1,68 @@
-# Imagen base de Spark (compatible y disponible en Docker Hub)
-FROM spark:3.5.1
+# ============================================================
+# Imagen base oficial de Apache Spark (sin Bitnami)
+# ============================================================
+FROM apache/spark:3.5.1
 
-# Instalar Python y utilidades
+# ============================================================
+# Cambiar a root para instalar dependencias del sistema
+# ============================================================
 USER root
+
+# Instalar Python, pip, Java y utilidades básicas
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip curl \
+    python3 python3-pip curl openjdk-11-jdk \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar Python como predeterminado
-RUN ln -s /usr/bin/python3 /usr/bin/python
+# ============================================================
+# Instalar dependencias de Python (si tienes requirements.txt)
+# ============================================================
+COPY requirements.txt /opt/spark/requirements.txt
+RUN pip install --no-cache-dir -r /opt/spark/requirements.txt || true
 
-# Copiar requirements si los tienes
-COPY requirements.txt /opt/bitnami/spark/requirements.txt
-RUN pip install --no-cache-dir -r /opt/bitnami/spark/requirements.txt || true
 
-# === Instalar JARs necesarios para Kafka ===
-WORKDIR /opt/bitnami/spark/jars
+# 🔹 Instalar psycopg2 para conexión con PostgreSQL
+RUN pip install --no-cache-dir psycopg2-binary
 
-# Spark-Kafka connector + dependencias
-ADD https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.13/3.5.1/spark-sql-kafka-0-10_2.13-3.5.1.jar .
-ADD https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.7.0/kafka-clients-3.7.0.jar .
+# ============================================================
+# Descargar e incluir los conectores Spark-Kafka y dependencias
+# ============================================================
+
+# --- Dependencias Kafka + JDBC ---
+WORKDIR /opt/spark/jars
+
+# ✅ Conector correcto (Spark 3.5.1 + Scala 2.12)
+ADD https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.1/spark-sql-kafka-0-10_2.12-3.5.1.jar .
+
+# ✅ Cliente Kafka compatible con esa versión de Spark
+ADD https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.5.1/kafka-clients-3.5.1.jar .
+
+# 🔧 (Opcional) Commons Pool — usado internamente por algunos conectores
 ADD https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.12.0/commons-pool2-2.12.0.jar .
 
-# Directorio de trabajo
-WORKDIR /opt/bitnami/spark/app
+# 🐘 (Opcional) JDBC driver de Postgres — útil si vas a escribir en bases de datos
+ADD https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar .
 
-# Usuario airflow (bitnami/spark trabaja con este user)
-USER 1001
+
+# ============================================================
+# Configurar entorno y permisos
+# ============================================================
+ENV SPARK_HOME=/opt/spark
+ENV PATH="$SPARK_HOME/bin:$PATH"
+RUN chmod -R 777 /opt/spark
+
+# ============================================================
+# Crear directorio de trabajo para tu aplicación
+# ============================================================
+WORKDIR /opt/spark/app
+COPY . /opt/spark/app
+
+# ============================================================
+# Usuario root (puedes cambiarlo si quieres más seguridad)
+# ============================================================
+USER root
+
+# ============================================================
+# Comando por defecto
+# ============================================================
+CMD ["bash"]

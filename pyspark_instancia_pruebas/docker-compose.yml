@@ -1,28 +1,20 @@
-version: '3'
 services:
   spark-master:
     image: spark-with-kafka
     container_name: spark-master
-    environment:
-      - SPARK_MODE=master
-      - SPARK_USER=airflow
-      - HADOOP_USER_NAME=airflow
+    command: bash -c "/opt/spark/sbin/start-master.sh && tail -f /opt/spark/logs/*"
     ports:
       - "7077:7077"
       - "8083:8080"
     networks:
       - airflow-spark
     volumes:
-      - ./pyspark_instancia_pruebas:/opt/bitnami/spark/app  # scripts PySpark accesibles desde el master
+      - ./pyspark_instancia_pruebas:/opt/spark/app
 
   spark-worker:
     image: spark-with-kafka
     container_name: spark-worker
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_USER=airflow
-      - HADOOP_USER_NAME=airflow
+    command: bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /opt/spark/logs/*"
     depends_on:
       - spark-master
     ports:
@@ -30,24 +22,20 @@ services:
     networks:
       - airflow-spark
     volumes:
-      - ./pyspark_instancia_pruebas:/opt/bitnami/spark/app  # scripts PySpark accesibles desde el worker
+      - ./pyspark_instancia_pruebas:/opt/spark/app
 
   spark-client:
     image: spark-with-kafka
     container_name: spark-client
     depends_on:
       - spark-master
-    environment:
-      - HOME=/opt/bitnami/spark
-      - SPARK_USER=airflow
-      - HADOOP_USER_NAME=airflow
-    volumes:
-      - ./pyspark_instancia_pruebas:/opt/bitnami/spark/app  # scripts PySpark accesibles desde el cliente
     stdin_open: true
     tty: true
-    command: bash -lc "mkdir -p /opt/bitnami/spark/.ivy2 && sleep infinity"
+    command: bash -lc "sleep infinity"
     networks:
       - airflow-spark
+    volumes:
+      - ./pyspark_instancia_pruebas:/opt/spark/app
 
 networks:
   airflow-spark:

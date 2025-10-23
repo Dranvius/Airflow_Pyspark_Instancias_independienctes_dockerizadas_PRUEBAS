@@ -11,7 +11,7 @@ default_args = {
 with DAG(
     dag_id="rabbit_to_db_pipeline",
     default_args=default_args,
-    schedule_interval="@hourly",  # o @daily o None
+    schedule ="@hourly",  # o @daily o None
     catchup=False,
     description="Consume la cola de procesamiento y luego la guarda en una base de datos"
 
