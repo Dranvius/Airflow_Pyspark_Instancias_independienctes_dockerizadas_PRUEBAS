@@ -1,0 +1,10 @@
+fastapi[all]==0.109.0  # Incluye FastAPI + Uvicorn + CORS + extras
+uvicorn[standard]==0.23.2
+psycopg2-binary==2.9.9  # Conexión PostgreSQL
+python-multipart==0.0.6  # Para recibir archivos (CSV)
+pandas==2.1.1            # Para manejo de CSV masivo
+
+# Dependencias añadidas para la arquitectura de eventos
+SQLAlchemy==2.0.23
+kafka-python==2.0.2
+pika==1.3.2

@@ -214,5 +214,4 @@ volumes:
   postgres-db-volume: {}
 
 networks:
-  airflow-spark:
-    external: true
+  airflow-spark: {}
