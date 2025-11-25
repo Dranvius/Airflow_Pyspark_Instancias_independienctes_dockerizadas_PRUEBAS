@@ -1,107 +1,53 @@
-import pika
-import json
 import os
-import time
-import logging
-from typing import Optional
+import json
+import pika
 
-# --------------------------
-# Configuración del logger
-# --------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-# --------------------------
-# Configuración RabbitMQ
-# --------------------------
-RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "rabbitmq")  # Nombre del servicio en Docker Compose
+RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "rabbitmq")
+RABBITMQ_PORT = int(os.environ.get("RABBITMQ_PORT", "5672"))
 RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "guest")
 RABBITMQ_PASS = os.environ.get("RABBITMQ_PASS", "guest")
 RABBITMQ_VHOST = os.environ.get("RABBITMQ_VHOST", "/app_vhost")
-ALERT_QUEUE_NAME_DEFAULT = os.environ.get("ALERT_QUEUE_NAME", "low_stock_alerts")
 
-MAX_RETRIES = 5
-RETRY_DELAY = 5  # segundos
+EXCHANGE_NAME = "inventory_alerts"
+ALERT_QUEUE = "low_stock_alerts"
 
-# --------------------------
-# Funciones
-# --------------------------
-def get_rabbitmq_connection() -> Optional[pika.BlockingConnection]:
-    """
-    Establece y devuelve una conexión con RabbitMQ, con reintentos.
-    """
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    parameters = pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        virtual_host=RABBITMQ_VHOST,
-        credentials=credentials
+
+def _get_channel():
+  """Crea canal de RabbitMQ y asegura exchange/queue fanout para alertas."""
+  credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+  params = pika.ConnectionParameters(
+      host=RABBITMQ_HOST,
+      port=RABBITMQ_PORT,
+      virtual_host=RABBITMQ_VHOST,
+      credentials=credentials,
+      heartbeat=30,
+      blocked_connection_timeout=30,
+  )
+  connection = pika.BlockingConnection(params)
+  channel = connection.channel()
+  channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type="fanout", durable=True)
+  channel.queue_declare(queue=ALERT_QUEUE, durable=True)
+  channel.queue_bind(exchange=EXCHANGE_NAME, queue=ALERT_QUEUE)
+  return connection, channel
+
+
+def publish_low_stock_alert(product_id: int, current_quantity: int, source: str = "api"):
+  """Envía una alerta de bajo stock a la cola de RabbitMQ (fanout)."""
+  try:
+    connection, channel = _get_channel()
+    payload = {
+        "product_id": product_id,
+        "current_quantity": current_quantity,
+        "source": source,
+    }
+    channel.basic_publish(
+        exchange=EXCHANGE_NAME,
+        routing_key="",
+        body=json.dumps(payload),
+        properties=pika.BasicProperties(content_type="application/json", delivery_mode=2),
     )
-    
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            connection = pika.BlockingConnection(parameters)
-            logger.info("✅ Conexión a RabbitMQ establecida.")
-            return connection
-        except pika.exceptions.AMQPConnectionError as e:
-            logger.warning(f"Intento {attempt}/{MAX_RETRIES} fallido: {e}")
-            if attempt < MAX_RETRIES:
-                time.sleep(RETRY_DELAY)
-            else:
-                logger.error("❌ No se pudo conectar a RabbitMQ después de varios intentos.")
-                return None
-
-def publish_low_stock_alert(
-    product_id: int,
-    current_quantity: int,
-    warning_level: int,
-    queue_name: str = ALERT_QUEUE_NAME_DEFAULT
-):
-    """
-    Publica una alerta de bajo stock en la cola de RabbitMQ.
-    """
-    connection = get_rabbitmq_connection()
-    if not connection:
-        logger.error("No se pudo publicar la alerta porque no hay conexión a RabbitMQ.")
-        return
-
-    try:
-        channel = connection.channel()
-        # Declarar la cola (durable)
-        channel.queue_declare(queue=queue_name, durable=True)
-
-        message = {
-            "product_id": product_id,
-            "current_quantity": current_quantity,
-            "warning_level": warning_level,
-            "alert_type": "LOW_STOCK"
-        }
-
-        # Publicar el mensaje
-        channel.basic_publish(
-            exchange='',
-            routing_key=queue_name,
-            body=json.dumps(message),
-            properties=pika.BasicProperties(
-                delivery_mode=2  # Persistente
-            )
-        )
-        logger.info(f"✅ Alerta de bajo stock para el producto {product_id} publicada en '{queue_name}'.")
-
-    except pika.exceptions.AMQPChannelError as e:
-        logger.error(f"❌ Error en el canal al publicar en RabbitMQ: {e}")
-    except Exception as e:
-        logger.error(f"❌ Error inesperado al publicar en RabbitMQ: {e}")
-    finally:
-        if connection and connection.is_open:
-            connection.close()
-            logger.info("🔒 Conexión a RabbitMQ cerrada.")
-
-# --------------------------
-# Ejemplo de uso
-# --------------------------
-if __name__ == '__main__':
-    logger.info("Ejecutando prueba de publicación en RabbitMQ...")
-    publish_low_stock_alert(product_id=123, current_quantity=8, warning_level=10)
+    connection.close()
+    return True
+  except Exception as exc:  # pragma: no cover - solo logging
+    print(f"RabbitMQ publish failed: {exc}")
+    return False

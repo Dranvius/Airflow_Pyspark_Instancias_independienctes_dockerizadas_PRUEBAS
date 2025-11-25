@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from kafka import KafkaProducer
 from typing import List
 
+from sqlalchemy import text
 from .. import schemas
 from ..kafka.producer import get_kafka_producer, TOPIC_MAP
+from ..database import SessionLocal
 
 router = APIRouter(
     prefix="/products",
@@ -97,10 +99,44 @@ def delete_product(
 # -----------------------------
 # Listar/Obtener productos (Deshabilitados)
 # -----------------------------
-@router.get("/", response_model=List[schemas.Product], description="Deshabilitado en esta arquitectura.")
+@router.get("/", description="Devuelve el catálogo desde Postgres")
 def list_products():
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="La lectura de datos se realiza desde el datamart consolidado, no directamente desde la API de eventos.")
+    """
+    Lectura directa desde Postgres para poblar el frontend.
+    """
+    with SessionLocal() as db:
+        rows = db.execute(
+            text("""
+            SELECT
+              id,
+              name,
+              quantity,
+              price,
+              NULL::text AS description,
+              NULL::text AS sku
+            FROM products
+            ORDER BY id
+            """)
+        ).mappings().all()
+        return [dict(row) for row in rows]
 
-@router.get("/{product_id}", response_model=schemas.Product, description="Deshabilitado en esta arquitectura.")
+@router.get("/{product_id}", description="Devuelve un producto por id desde Postgres")
 def get_product(product_id: int):
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="La lectura de datos se realiza desde el datamart consolidado, no directamente desde la API de eventos.")
+    with SessionLocal() as db:
+        row = db.execute(
+            text("""
+            SELECT
+              id,
+              name,
+              quantity,
+              price,
+              NULL::text AS description,
+              NULL::text AS sku
+            FROM products
+            WHERE id = :pid
+            """),
+            {"pid": product_id}
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
+        return dict(row)

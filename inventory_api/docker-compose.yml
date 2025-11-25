@@ -15,7 +15,9 @@ services:
       POSTGRES_DB: airflow
       POSTGRES_USER: sergio
       POSTGRES_PASSWORD: 123
-      KAFKA_BROKER: kafka:9092
+      # Se reemplaza Kafka por RabbitMQ
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5674
 
 networks:
   airflow-spark:

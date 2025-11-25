@@ -39,16 +39,20 @@ services:
     networks:
       - airflow-spark
     environment:
+      POSTGRES_HOST_AUTH_METHOD: trust # Permite conexiones sin contraseña desde la red de Docker
       POSTGRES_USER: sergio
       POSTGRES_PASSWORD: 123
       POSTGRES_DB: airflow
     volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
       retries: 5
       start_period: 5s
+    ports:
+      - "5433:5432" # Expone el puerto 5432 del contenedor al puerto 5433 de tu máquina
     restart: always
 
   redis:
@@ -200,15 +204,73 @@ services:
       - airflow-spark
     ports:
       - "9092:9092"
+    restart: always
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENERS: PLAINTEXT://:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_CREATE_TOPICS: "cliente:1:1,sales:1:1"  # <-- tópicos que tu producer necesita
+      KAFKA_CREATE_TOPICS: "cliente:1:1,sales:1:1,inventory_updates:1:1,inventory_entries:1:1,inventory_out:1:1,inventory_adjustments:1:1,inventory_new_products:1:1"
     depends_on:
       - zookeeper
+
+  # --------------------------
+  # RabbitMQ
+  # --------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    ports:
+      - "5674:5672"     # Puerto de mensajería AMQP (5674 en tu máquina, 5672 dentro de Docker)
+      - "15674:15672"   # Panel web de administración
+    environment:
+      RABBITMQ_MANAGEMENT_LOAD_DEFINITIONS: /etc/rabbitmq/definitions.json
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbitmq_management load_definitions \"/etc/rabbitmq/definitions.json\""
+    volumes:
+      # La ruta ahora es relativa a la raíz del proyecto, donde está este docker-compose.
+      - ./rabbitmq/rabbit_definitions.json:/etc/rabbitmq/definitions.json:ro
+    networks:
+      - airflow-spark
+    restart: always
+
+  # --------------------------
+  # Inventory API (Backend)
+  # --------------------------
+  inventory_api:
+    # La ruta de construcción ahora es relativa a la raíz del proyecto.
+    build: ./inventory_api
+    container_name: inventory_api
+    ports:
+      - "9000:9000"
+    networks:
+      - airflow-spark
+    environment:
+      KAFKA_BROKER: kafka:9092
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: airflow
+      POSTGRES_USER: sergio
+      POSTGRES_PASSWORD: 123
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672 # Se comunica por el puerto INTERNO de la red Docker
+    depends_on:
+      - postgres
+      - rabbitmq
+      - kafka
+
+  frontend:
+    build: ./Front_react
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:9000
+      REACT_APP_WEBSOCKET_URL: ws://localhost:9000/ws/updates
+    networks:
+      - airflow-spark
+    depends_on:
+      - inventory_api
 
 volumes:
   postgres-db-volume: {}

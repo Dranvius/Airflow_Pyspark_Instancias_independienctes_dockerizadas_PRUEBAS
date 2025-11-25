@@ -1,18 +1,8 @@
 import csv
-import json
 from kafka import KafkaProducer
 from typing import Dict, Any
 
-# Importamos TOPIC_MAP desde un módulo centralizado de Kafka
-try:
-    from src.kafka_producer import TOPIC_MAP  # Ajusta la ruta si no funciona
-except ImportError:
-    # Definimos un TOPIC_MAP de respaldo para evitar fallos de importación
-    TOPIC_MAP = {
-        "entrada": "movement_entrada",
-        "salida": "movement_salida",
-        "ajuste": "movement_ajuste"
-    }
+from ..kafka.producer import TOPIC_MAP
 
 def process_inventory_csv(file_path: str, producer: KafkaProducer) -> Dict[str, Any]:
     """
@@ -47,7 +37,7 @@ def process_inventory_csv(file_path: str, producer: KafkaProducer) -> Dict[str, 
                         "source": "csv_import"
                     }
                     
-                    producer.send(topic, json.dumps(event_data).encode('utf-8'))
+                    producer.send(topic, event_data)
                     successful_rows += 1
 
                 except (KeyError, ValueError, TypeError) as e:

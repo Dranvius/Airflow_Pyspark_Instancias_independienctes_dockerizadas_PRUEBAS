@@ -5,9 +5,12 @@ import psycopg2
 
 # Importar los nuevos routers
 from src.api import movement, product, uploads
+from src.api import inventory_read
 from src.websocket_manager import manager as websocket_manager # Importamos el gestor de WebSockets
 from src.rabbitmq import consumer as rabbitmq_consumer
 from src.kafka.producer import get_kafka_producer
+from src.database import Base, engine
+from src import models
 
 # -----------------------------
 # Configuración CORS y FastAPI
@@ -42,6 +45,8 @@ app.include_router(movement.router)
 app.include_router(product.router)
 # Se añade el router que maneja la subida de archivos
 app.include_router(uploads.router)
+# Lectura consolidada simple
+app.include_router(inventory_read.router)
 
 # -----------------------------
 # Endpoint de WebSocket para notificaciones
@@ -65,6 +70,9 @@ async def websocket_endpoint(websocket: WebSocket):
 def startup_event():
     # Verificar conexión a PostgreSQL
     test_postgres_connection()
+
+    # Crear tablas si no existen (productos, inventario, movimientos)
+    Base.metadata.create_all(bind=engine)
     
     # Inicializar productor de Kafka para asegurar conectividad
     get_kafka_producer()
