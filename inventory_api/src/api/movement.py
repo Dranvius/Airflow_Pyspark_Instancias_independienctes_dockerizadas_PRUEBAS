@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from kafka import KafkaProducer
 from sqlalchemy import text
 import asyncio
+import traceback
 
 from .. import schemas
 from ..kafka.producer import get_kafka_producer, get_topic_map
@@ -16,6 +17,7 @@ router = APIRouter(
 
 
 @router.post("/", status_code=status.HTTP_202_ACCEPTED)
+@router.post("", status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
 def record_movement(
     movement: schemas.MovementCreate,
     producer: KafkaProducer = Depends(get_kafka_producer),
@@ -25,11 +27,7 @@ def record_movement(
     Recibe un movimiento de inventario y lo publica en Kafka para ser procesado de forma asíncrona.
     Además dispara una alerta simple de bajo stock para salidas/ajustes pequeños via RabbitMQ.
     """
-    if producer is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Servicio de Kafka no disponible."
-        )
+    kafka_ok = True
 
     if movement.type not in topic_map:
         raise HTTPException(
@@ -40,10 +38,19 @@ def record_movement(
     topic = topic_map[movement.type]
 
     try:
-        producer.send(topic, movement.model_dump())
-        producer.flush()
+        # 1) Intentar publicar en Kafka (no crítico)
+        try:
+            if producer is None:
+                kafka_ok = False
+            else:
+                producer.send(topic, movement.model_dump())
+                producer.flush()
+        except Exception as e:
+            kafka_ok = False
+            # Continuamos con la actualización de stock y alerta aunque Kafka falle
+            print(f"Kafka publish failed (movement): {e}")
 
-        # Actualizar stock directo en Postgres para reflejarse en el dashboard
+        # 2) Actualizar stock directo en Postgres + registrar movimiento
         with SessionLocal() as db:
             product_row = db.execute(
                 text("SELECT quantity FROM products WHERE id = :pid"),
@@ -91,40 +98,63 @@ def record_movement(
                     {"pid": movement.product_id, "qty": new_qty, "warn": warning_level},
                 )
 
+            # Registrar movimiento en tabla movements (para el historial)
+            db.execute(
+                text(
+                    """
+                    INSERT INTO movements (product_id, type, quantity, timestamp, origin)
+                    VALUES (:pid, :type, :qty, NOW(), :origin)
+                    """
+                ),
+                {
+                    "pid": movement.product_id,
+                    "type": movement.type,
+                    "qty": movement.quantity,
+                    "origin": movement.description or "frontend",
+                },
+            )
+
             db.commit()
 
             if new_qty <= warning_level:
-                ok = publish_low_stock_alert(
-                    product_id=movement.product_id,
-                    current_quantity=new_qty,
-                    source="movement_api",
-                )
+                try:
+                    ok = publish_low_stock_alert(
+                        product_id=movement.product_id,
+                        current_quantity=new_qty,
+                        source="movement_api",
+                    )
+                except Exception as exc:
+                    ok = False
+                    print(f"RabbitMQ publish exception: {exc}")
+
                 if not ok:
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            loop.create_task(
-                                websocket_manager.broadcast(
-                                    {
-                                        "type": "low_stock_alert",
-                                        "payload": {
-                                            "product_id": movement.product_id,
-                                            "current_quantity": new_qty,
-                                            "source": "movement_api_fallback",
-                                        },
-                                    }
-                                )
+                        asyncio.run(
+                            websocket_manager.broadcast(
+                                {
+                                    "type": "low_stock_alert",
+                                    "payload": {
+                                        "product_id": movement.product_id,
+                                        "current_quantity": new_qty,
+                                        "source": "movement_api_fallback",
+                                    },
+                                }
                             )
+                        )
                     except Exception as exc:
-                        print(f"Fallback WS alerta movimiento {movement.product_id} fallo: {exc}")
+                        print(f"Fallback WS alerta movimiento {movement.product_id} falló: {exc}")
 
         return {
             "status": "success",
-            "message": f"Movimiento '{movement.type}' aceptado y enviado para procesamiento.",
-            "data": movement.model_dump()
+            "message": f"Movimiento '{movement.type}' aceptado",
+            "data": movement.model_dump(),
+            "kafka_published": kafka_ok,
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        print("Error procesando movimiento:\n", traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al publicar evento en Kafka: {e}"
+            detail=f"Error procesando movimiento: {e}"
         )

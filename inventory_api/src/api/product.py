@@ -26,21 +26,59 @@ def create_product(
     """
     Recibe los datos de un nuevo producto y publica un evento 'nuevo_producto' en Kafka.
     """
-    if producer is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Servicio de Kafka no disponible.")
-
+    kafka_ok = True
     topic = TOPIC_MAP["nuevo_producto"]
-    
+    # 1) Intentar publicar en Kafka (no crítico)
     try:
-        producer.send(topic, product.model_dump())
-        producer.flush()
-        return {
-            "status": "success",
-            "message": "Solicitud para crear nuevo producto recibida.",
-            "data": product.model_dump()
-        }
+        if producer:
+            producer.send(topic, product.model_dump())
+            producer.flush()
+        else:
+            kafka_ok = False
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error publicando evento en Kafka: {e}")
+        kafka_ok = False
+        print(f"Kafka publish failed (product): {e}")
+
+    # 2) Persistir en Postgres para que el frontend pueda operar de inmediato
+    try:
+        with SessionLocal() as db:
+            row = db.execute(
+                text(
+                    """
+                    INSERT INTO products (name, quantity, price, description, sku)
+                    VALUES (:name, 0, :price, :description, :sku)
+                    RETURNING id, name, quantity, price, description, sku
+                    """
+                ),
+                {
+                    "name": product.name,
+                    "price": product.price,
+                    "description": product.description,
+                    "sku": product.sku,
+                },
+            ).mappings().first()
+
+            # Crear inventario asociado si no existe
+            db.execute(
+                text(
+                    """
+                    INSERT INTO inventory (product_id, quantity, stock_warning_level)
+                    VALUES (:pid, :qty, 10)
+                    ON CONFLICT (product_id) DO NOTHING
+                    """
+                ),
+                {"pid": row["id"], "qty": row["quantity"]},
+            )
+            db.commit()
+
+            return {
+                "status": "success",
+                "message": "Producto creado",
+                "data": dict(row),
+                "kafka_published": kafka_ok,
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear producto en BD: {e}")
 
 # -----------------------------
 # Actualizar producto (Publicar evento)
