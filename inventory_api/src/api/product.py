@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from kafka import KafkaProducer
 from typing import List
+import asyncio
 
 from sqlalchemy import text
 from .. import schemas
 from ..kafka.producer import get_kafka_producer, TOPIC_MAP
 from ..database import SessionLocal
+from ..rabbitmq.producer import publish_low_stock_alert
+from ..websocket_manager import manager as websocket_manager
 
 router = APIRouter(
     prefix="/products",
@@ -108,17 +111,48 @@ def list_products():
         rows = db.execute(
             text("""
             SELECT
-              id,
-              name,
-              quantity,
-              price,
+              p.id,
+              p.name,
+              p.quantity,
+              p.price,
+              COALESCE(i.stock_warning_level, 10) AS stock_warning_level,
               NULL::text AS description,
               NULL::text AS sku
-            FROM products
-            ORDER BY id
+            FROM products p
+            LEFT JOIN inventory i ON i.product_id = p.id
+            ORDER BY p.id
             """)
         ).mappings().all()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            payload = dict(row)
+            result.append(payload)
+            # Emitir alerta si ya está en nivel de aviso al momento de leer
+            if payload["quantity"] is not None and payload["quantity"] <= payload["stock_warning_level"]:
+                ok = publish_low_stock_alert(
+                    product_id=payload["id"],
+                    current_quantity=payload["quantity"],
+                    source="read_api",
+                )
+                if not ok:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            loop.create_task(
+                                websocket_manager.broadcast(
+                                    {
+                                        "type": "low_stock_alert",
+                                        "payload": {
+                                            "product_id": payload["id"],
+                                            "current_quantity": payload["quantity"],
+                                            "source": "read_api_fallback",
+                                        },
+                                    }
+                                )
+                            )
+                    except Exception as exc:
+                        print(f"Fallback WS alerta producto {payload['id']} falló: {exc}")
+        return result
 
 @router.get("/{product_id}", description="Devuelve un producto por id desde Postgres")
 def get_product(product_id: int):

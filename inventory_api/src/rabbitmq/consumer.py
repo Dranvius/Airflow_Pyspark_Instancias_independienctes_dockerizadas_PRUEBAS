@@ -15,6 +15,7 @@ RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "guest")
 RABBITMQ_PASS = os.environ.get("RABBITMQ_PASS", "guest")
 RABBITMQ_VHOST = os.environ.get("RABBITMQ_VHOST", "/app_vhost")
 # --- Configuration ---
+EXCHANGE_NAME = 'inventory_alerts'
 ALERT_QUEUE_NAME = 'low_stock_alerts'
 ALERT_EMAIL_RECIPIENT = os.environ.get("ALERT_EMAIL_RECIPIENT") # Email para recibir las alertas
 
@@ -28,7 +29,13 @@ def on_message_callback(channel, method, properties, body):
     """
     print("--- Alerta de RabbitMQ recibida ---")
     try:
-        message = json.loads(body)
+        try:
+            message = json.loads(body)
+        except json.JSONDecodeError:
+            raw_text = body.decode(errors="ignore") if isinstance(body, (bytes, bytearray)) else str(body)
+            print(f"ERROR: Error al decodificar el mensaje JSON. Cuerpo recibido: {raw_text}")
+            message = {"raw_message": raw_text}
+
         product_id = message.get("product_id")
         current_quantity = message.get("current_quantity")
         
@@ -75,9 +82,6 @@ def on_message_callback(channel, method, properties, body):
         channel.basic_ack(delivery_tag=method.delivery_tag)
         print(f"INFO: Mensaje de alerta para producto {product_id} procesado y confirmado.")
 
-    except json.JSONDecodeError:
-        print("ERROR: Error al decodificar el mensaje JSON.")
-        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
     except Exception as e:
         print(f"ERROR: Error procesando el mensaje: {e}")
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
@@ -102,8 +106,10 @@ def start_consuming():
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
 
-            # Declaramos la cola (es una operación idempotente)
+            # Declaramos exchange y cola, y hacemos el binding (idempotente)
+            channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type="fanout", durable=True)
             channel.queue_declare(queue=ALERT_QUEUE_NAME, durable=True)
+            channel.queue_bind(exchange=EXCHANGE_NAME, queue=ALERT_QUEUE_NAME)
             
             # Solo procesar un mensaje a la vez. RabbitMQ no enviará un nuevo mensaje
             # hasta que el actual sea confirmado (`basic_ack`).

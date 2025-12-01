@@ -1,115 +1,445 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
 from fastapi.middleware.cors import CORSMiddleware
+
 import os
+
 import psycopg2
 
+import json
+
+
+
+
 # Importar los nuevos routers
+
+
 from src.api import movement, product, uploads
+
 from src.api import inventory_read
+
 from src.websocket_manager import manager as websocket_manager # Importamos el gestor de WebSockets
+
 from src.rabbitmq import consumer as rabbitmq_consumer
+
 from src.kafka.producer import get_kafka_producer
-from src.database import Base, engine
+
+from src.database import Base, engine, SessionLocal
+
+from sqlalchemy import text
+
+from src.rabbitmq.producer import publish_low_stock_alert
+
 from src import models
 
+
+
+
 # -----------------------------
+
+
 # Configuración CORS y FastAPI
+
+
 # -----------------------------
+
+
 app = FastAPI(
+
+
     title="Inventory API",
+
+
     description="API para gestionar eventos de inventario y publicarlos en Kafka.",
+
+
     version="1.0.0"
+
+
 )
+
+
+
+
 
 origins = [
+
+
     "http://localhost:3000",  # Puerto estándar de React
+
+
     "http://localhost:3001",  # Puerto alternativo común
+
+
     "http://localhost:3002",  # Otro puerto alternativo
+
+
     "http://react-app:3000"   # Para comunicación entre contenedores
+
+
 ]
 
+
+
+
+
 app.add_middleware(
+
+
     CORSMiddleware,
+
+
     allow_origins=origins,
+
+
     allow_credentials=True,
+
+
     allow_methods=["*"],
+
+
     allow_headers=["*"],
+
+
 )
 
+
+
+
+
 # -----------------------------
+
+
 # Incluir Routers de la API
+
+
 # -----------------------------
+
+
 # Se añade el router que maneja los movimientos de inventario
+
+
 app.include_router(movement.router)
+
+
 # Se añade el router que maneja los productos
+
 app.include_router(product.router)
+
 # Se añade el router que maneja la subida de archivos
+
 app.include_router(uploads.router)
+
 # Lectura consolidada simple
+
 app.include_router(inventory_read.router)
 
+
+
+
 # -----------------------------
+
+
 # Endpoint de WebSocket para notificaciones
+
+
 # -----------------------------
+
+
 @app.websocket("/ws/updates")
+
+
 async def websocket_endpoint(websocket: WebSocket):
+
+
     """
+
+
     Endpoint para que el frontend se conecte y reciba notificaciones en tiempo real.
+
+
     """
+
+
     await websocket_manager.connect(websocket)
+
+
+    await send_low_stock_snapshot(websocket)
+
+
     try:
+
+
         while True:
+
+
             await websocket.receive_text() # Mantiene la conexión viva
+
+
     except WebSocketDisconnect:
+
+
         websocket_manager.disconnect(websocket)
 
+
+
+
+
 # -----------------------------
+
+
 # Eventos de Inicio de la Aplicación
+
+
 # -----------------------------
+
+
 @app.on_event("startup")
+
+
 def startup_event():
+
     # Verificar conexión a PostgreSQL
+
     test_postgres_connection()
 
+
+
     # Crear tablas si no existen (productos, inventario, movimientos)
+
     Base.metadata.create_all(bind=engine)
+
+    sync_inventory_with_products()
+
     
+
     # Inicializar productor de Kafka para asegurar conectividad
+
     get_kafka_producer()
 
+
+
     # Iniciar consumidor de RabbitMQ en segundo plano
+
     rabbitmq_consumer.start_consumer_in_background()
 
+
+
+
 # -----------------------------
+
+
 # PostgreSQL Connection Test (Opcional, para health check)
+
+
 # -----------------------------
+
+
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+
+
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", 5432))
+
+
 POSTGRES_DB = os.getenv("POSTGRES_DB", "airflow")
+
+
 POSTGRES_USER = os.getenv("POSTGRES_USER", "sergio")
+
+
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "123")
 
+
+
+
+
 def test_postgres_connection():
+
+
     try:
+
+
         conn = psycopg2.connect(
+
+
             host=POSTGRES_HOST,
+
+
             port=POSTGRES_PORT,
+
+
             database=POSTGRES_DB,
+
+
             user=POSTGRES_USER,
+
+
             password=POSTGRES_PASSWORD
+
+
         )
+
+
         cur = conn.cursor()
+
+
         cur.execute("SELECT 1;")
+
+
         cur.fetchone()
+
+
         cur.close()
+
+
         conn.close()
+
+
         print("✅ Conexión a PostgreSQL verificada con éxito!")
+
+
     except Exception as e:
+
+
         print(f"❌ Error conectando a PostgreSQL: {e}")
 
+
+
+
+
 # -----------------------------
+
+
 # Endpoint de prueba de conexión
+
+
 # -----------------------------
+
+
 @app.get("/api/ping")
+
+
 def ping():
+
     return {"message": "Backend conectado correctamente"}
+
+
+
+# -----------------------------
+
+# Sincronizar inventario con productos y disparar alertas si aplica
+
+# -----------------------------
+
+def sync_inventory_with_products():
+
+    """
+
+    Crea registros en inventory para los productos que aún no lo tengan
+
+    y dispara alertas si ya llegan con stock bajo.
+
+    """
+
+    try:
+
+        with SessionLocal() as db:
+
+            products = db.execute(text("SELECT id, quantity FROM products")).mappings().all()
+
+            for prod in products:
+
+                inv = db.execute(
+
+                    text("SELECT id, stock_warning_level FROM inventory WHERE product_id = :pid"),
+
+                    {"pid": prod["id"]},
+
+                ).mappings().first()
+
+
+
+                warning_level = inv["stock_warning_level"] if inv else 10
+
+
+
+                if inv:
+
+                    db.execute(
+
+                        text("UPDATE inventory SET quantity = :qty WHERE id = :id"),
+
+                        {"qty": prod["quantity"], "id": inv["id"]},
+
+                    )
+
+                else:
+
+                    db.execute(
+
+                        text(
+
+                            """
+
+                            INSERT INTO inventory (product_id, quantity, stock_warning_level)
+
+                            VALUES (:pid, :qty, :warn)
+
+                            """
+
+                        ),
+
+                        {"pid": prod["id"], "qty": prod["quantity"], "warn": warning_level},
+
+                    )
+
+
+
+                if prod["quantity"] <= warning_level:
+
+                    publish_low_stock_alert(
+
+                        product_id=prod["id"],
+
+                        current_quantity=prod["quantity"],
+
+                        source="startup_sync",
+
+                    )
+
+            db.commit()
+
+    except Exception as exc:  # pragma: no cover - solo logging
+
+        print(f"Sync inventario-productos falló: {exc}")
+
+
+
+async def send_low_stock_snapshot(websocket: WebSocket):
+    """
+    Envía al cliente las alertas de stock bajo existentes al momento de conectarse.
+    """
+    try:
+        with SessionLocal() as db:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT product_id, quantity, stock_warning_level
+                    FROM inventory
+                    WHERE quantity <= stock_warning_level
+                    """
+                )
+            ).mappings().all()
+            for row in rows:
+                message = {
+                    "type": "low_stock_alert",
+                    "payload": {
+                        "product_id": row["product_id"],
+                        "current_quantity": row["quantity"],
+                        "source": "snapshot",
+                    },
+                }
+                print(f"Snapshot low stock -> product {row['product_id']} qty {row['quantity']}")
+                await websocket.send_text(json.dumps(message))
+    except Exception as exc:  # pragma: no cover - solo logging
+        print(f"Snapshot low stock falló: {exc}")

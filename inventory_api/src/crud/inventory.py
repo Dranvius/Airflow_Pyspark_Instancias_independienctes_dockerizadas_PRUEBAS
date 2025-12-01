@@ -1,5 +1,7 @@
 from sqlalchemy.orm import Session
+
 from .. import models, schemas
+from ..rabbitmq.producer import publish_low_stock_alert
 
 def get_inventory_by_product_id(db: Session, product_id: int):
     """
@@ -44,10 +46,12 @@ def update_inventory_quantity(db: Session, product_id: int, quantity_change: int
     db.refresh(db_inventory)
     
     # Comprobar si el stock está por debajo del nivel de alerta
-    if db_inventory.quantity < db_inventory.stock_warning_level:
-        # Aquí es donde se podría disparar la lógica para enviar una alerta a RabbitMQ
-        print(f"ALERTA: Stock bajo para el producto {product_id}. Cantidad actual: {db_inventory.quantity}")
-        # En el proyecto real, aquí iría la llamada al productor de RabbitMQ.
+    if db_inventory.quantity <= db_inventory.stock_warning_level:
+        publish_low_stock_alert(
+            product_id=product_id,
+            current_quantity=db_inventory.quantity,
+            source="inventory_service",
+        )
         
     return db_inventory
 

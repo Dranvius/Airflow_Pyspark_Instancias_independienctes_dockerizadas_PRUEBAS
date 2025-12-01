@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
+import json
 import pika
 
 # -----------------------------
@@ -42,17 +43,38 @@ events = df.selectExpr("CAST(value AS STRING) as json_str") \
 # Configuración RabbitMQ
 # -----------------------------
 RABBITMQ_HOST = "rabbitmq"
+RABBITMQ_USER = "guest"
+RABBITMQ_PASS = "guest"
+RABBITMQ_VHOST = "/app_vhost"
 LOW_STOCK_THRESHOLD = 5
 
+EXCHANGE_NAME = "inventory_alerts"
+ALERT_QUEUE = "low_stock_alerts"
+
 def send_low_stock_alert(product_id, quantity):
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
+    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+    params = pika.ConnectionParameters(
+        host=RABBITMQ_HOST,
+        virtual_host=RABBITMQ_VHOST,
+        credentials=credentials,
+    )
+    connection = pika.BlockingConnection(params)
     channel = connection.channel()
-    channel.queue_declare(queue='low_stock_alerts', durable=True)
+    channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type="fanout", durable=True)
+    channel.queue_declare(queue=ALERT_QUEUE, durable=True)
+    channel.queue_bind(exchange=EXCHANGE_NAME, queue=ALERT_QUEUE)
     
-    message = f"Producto {product_id} bajo stock: {quantity} unidades"
-    channel.basic_publish(exchange='',
-                          routing_key='low_stock_alerts',
-                          body=message)
+    payload = {
+        "product_id": product_id,
+        "current_quantity": quantity,
+        "source": "spark_streaming",
+    }
+    channel.basic_publish(
+        exchange=EXCHANGE_NAME,
+        routing_key="",
+        body=json.dumps(payload),
+        properties=pika.BasicProperties(content_type="application/json", delivery_mode=2),
+    )
     connection.close()
 
 # -----------------------------
